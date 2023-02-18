@@ -71,7 +71,7 @@ def getAllBinaryStringCombinationMatchingPattern(strNumber):
     allCombs = [i for i in allCombs if re.match(pattern, i)]
     return allCombs
 
-def differenceBetweenID(id1, id2):
+def getIDPatternDifferences(id1, id2):
     # Return a string as long as id1 and id2. Each character is x if the corresponding characters in id1 and id2 are the same. Otherwise, it is the character in id2.
     # e.g. id1 = '0000', id2 = '0011' -> 'xx11'
     # e.g. id1 = '0000', id2 = '1111' -> '1111'
@@ -124,7 +124,7 @@ def negatePattern(pattern):
     # e.g. pattern = 'x1x0' -> 'x0x1'
     return pattern.replace('0', 't').replace('1', '0').replace('t', '1')
 
-def f(id1, id2, nIntervalli, pattern, tau):
+def getAllNodesViolatingMinDownAndUpTime(id1, id2, nIntervalli, pattern, tau):
     i1, t1 = id1
     i2, t2 = id2
     flag = False
@@ -156,7 +156,11 @@ def f(id1, id2, nIntervalli, pattern, tau):
     # 5
     output = []
     for (k,v) in d.items():
-        r = range(t2+1, min(t2+v-1,nIntervalli-1))
+        lht = t2+1
+        rht = min(t2+v-1,nIntervalli-1)
+        if lht > rht:
+            continue
+        r = range(lht, rht)
         output.extend([(k,time) for time in r])
     if flag:
         print(output)
@@ -184,10 +188,18 @@ def plotNetworkWithSolution(myNet, modelSolution):
     for i in myNet.nodes:
         # Plot the nodes
         plt.plot(i._t, i.getIntegerNumber(), 'o')
-        
+
+    for arc in myNet.arcs:
+        i1, t1 = arc._n1.id
+        i2, t2 = arc._n2.id
+        plt.plot([t1, t2], [binStrToInt(i1), binStrToInt(i2)], color='black')
+
     # Plot the solution arcs
     for (k,v) in modelSolution.iter_var_values():
-        i1, t1, i2, t2 = (getArcFromStrVariableName(k.name))
-        plt.plot([t1, t2], [binStrToInt(i1), binStrToInt(i2)], color='red')
+        if k.name.startswith("x_") and v == 1:
+            i1, t1, i2, t2 = (getArcFromStrVariableName(k.name))
+            plt.plot([t1, t2], [binStrToInt(i1), binStrToInt(i2)], color='red')
         #plt.arrow(t1, binStrToInt(i1), t2,  binStrToInt(i2), width=1, head_width=5, head_length=2.5, color='black')
+
+    plt.title(f'Final cost is: {modelSolution.get_objective_value()}')
     plt.show()
