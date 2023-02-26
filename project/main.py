@@ -4,10 +4,12 @@ import datetime
 import multiprocessing
 from docplex.mp.model import Model
 
-
-DO_VERBOSE_LOG = False
+DO_REDUCE_NUMBER_OF_NODES = True
 DO_MULTIPROCESSING_EDPROBLEMS = True
-DO_MULTIPROCESSING_VARIABLES = False # Cannot create variables in parallel. It will cause an error due to the fact that the variables are not created by the same model
+DO_SAVE_ARCS_IN_NODES = True
+
+DO_MINUP_MINDOWN = True
+DO_PRINT_ALL_ARCS = False
 
 class Node():
     """
@@ -24,7 +26,6 @@ class Node():
         self._t = time
         self.id = (self.__i, self._t)
         self.u = self.__getUnitsVector()
-        # self._F = 0 # TODO later
 
         self.isSource = isSource
         self.isSink = isSink
@@ -62,12 +63,7 @@ class Node():
     # Create a CPlex model to solve the economic dispatch problem for the units that are on
     # and return the cost of the flow
     def _calculateFlowCost(self):
-        # print("AAAA")
-        if DO_VERBOSE_LOG:
-            print("I'm calculating the flow cost of node", self.__str__(), "at time", self._t)
         if self.isSource:
-            if DO_VERBOSE_LOG:
-                print("I'm the source node, so the flow cost is 0")
             self._F = 0
             return
         if self.isSink:
@@ -80,8 +76,6 @@ class Node():
         # x[i] <= Pmin[i] if u[i] == 0
         # sum(x[i]) == D[t]
 
-        if DO_VERBOSE_LOG:
-            print("I'm not the source node, so I'm creating the CPLEX model to solve the ED problem")
         # Create the CPLEX model
         EDmodel = Model(name=f"Economic Dispatch within node {self.__str__()}")
 
@@ -112,12 +106,11 @@ class Node():
         '''END ADD CONSTRAINTS'''
 
         modelSolution = EDmodel.solve()
-        assert modelSolution  # if null then is not feasible (but it should be)
-        if DO_VERBOSE_LOG:
-            print("Problem solved")
-        # modelSolution.display()
-
-        self._F = modelSolution.get_objective_value()
+        #assert modelSolution  # if null then is not feasible (but it should be)
+        if not modelSolution:
+            self._F = 1000000000
+        else:
+            self._F = modelSolution.get_objective_value()
 
     def getIntegerNumber(self):
         int2 = utils.binStrToInt(self.__i)
@@ -140,15 +133,6 @@ def Worker_RunEDModelOnSample(nodes, return_list):
     
     return_list.extend(l)
 
-def Worker_CreateVariables(arcs, ns, return_dict):
-    UCNetworkModel = ns.model
-    d={}
-    for arc in arcs:
-        k = arc
-        v = UCNetworkModel.continuous_var(name='x_{0}_{1}'.format(arc[0], arc[1]))     
-        d[k] = v
-    return_dict.update(d)   
-
 class Arc():
     def __init__(self, node1: Node, node2: Node):
         self._n1 = node1
@@ -156,23 +140,20 @@ class Arc():
         assert node1.id[1] == node2.id[1] - 1
         self.id = (self._n1.id, self._n2.id)
         self._transitionCost = Arc.calculateTransitionCost(node1, node2)
-        # self.cost = node1._F + self._transitionCost # TODO Later
 
     def doLazyEvaluation(self):
         self._calculateOutputFlowCost()
-        self._n1.outerArcs.append(self)
-        self._n2.innerArcs.append(self)
+        if DO_SAVE_ARCS_IN_NODES:
+            self._n1.outerArcs.append(self)
+            self._n2.innerArcs.append(self)
         
     def _calculateOutputFlowCost(self):
-        if DO_VERBOSE_LOG:
-            print("\n\nI'm calculating the output flow cost of arc", self.__str__())
         # if n1 has attribute _F then it has been calculated
         if not hasattr(self._n1, '_F'):
             # Evaluate the flow cost only on nodes with an exit arc
             self._n1._calculateFlowCost()
         self.cost = self._n1._F + self._transitionCost
-        if DO_VERBOSE_LOG:
-            print("The output flow cost of arc", self.__str__(), "is", self.cost)
+
 
 
     @staticmethod
@@ -200,12 +181,8 @@ class Arc():
 
     def __eq__(self, __o: object) -> bool:
         if isinstance(__o, Arc):
-            if DO_VERBOSE_LOG:
-                print("1) I'm comparing", self._n1, self._n2, "with", __o._n1, __o._n2)
             return self._n1 == __o._n1 and self._n2 == __o._n2
         if type(__o) is tuple and len(__o) == 2 and isinstance(__o[0], Node) and isinstance(__o[1], Node):
-            if DO_VERBOSE_LOG:
-                print("2) I'm comparing", self._n1, self._n2, "with", __o[0], __o[1])
             return self._n1 == __o[0] and self._n2 == __o[1]
         return False
 
@@ -251,13 +228,15 @@ class UC_Network():
         sink = Node(input.initial_status, input.nPeriodi, isSink=True)
         nodes.append(sink)
 
-        nodes = [n for n in nodes if (n.isSource or n.isSink) or n.isValid()]
+        if DO_REDUCE_NUMBER_OF_NODES:
+            nodes = [n for n in nodes if (n.isSource or n.isSink) or n.isValid()]
+
         print(
             f"I removed {(oldLength-(currLength := len(nodes)-2))/oldLength:.2f}% nodes. Current number of nodes is {currLength}")
         
         ####################################################################################################
         # Solve the Economic Dispatch Problem on each node
-        print("I'm starting solving all ED problems at", now.strftime("%Y-%m-%d %H:%M:%S"))
+        print("I'm starting solving all ED problems at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         if DO_MULTIPROCESSING_EDPROBLEMS:
         ####################################################
             # Split the nodes in as many chunks as the number of cores and calculate the flow cost in parallel
@@ -295,25 +274,6 @@ class UC_Network():
         #############################################################################################################################
 
         print("I'm creating the arcs")
-        '''
-        s1 = datetime.datetime.now()
-        arcs = []
-        for idx in range(0, len(nodes)-nCombs, nCombs):
-            # Get the first 24 nodes in a list
-            curr = nodes[idx:idx+nCombs]
-            # Get the next 24 nodes in a list
-            next = nodes[idx+nCombs:idx+2*nCombs]
-            # print(idx)
-            # print("************ curr ************")
-            # print(*curr, sep='\n')
-            # print("************ next ************")
-            # print(*next, sep='\n')
-            # print("************************")
-            # Create the arcs between the nodes in temp and the next 24 nodes
-            arcs.extend([Arc(i, j) for i in curr for j in next])
-        e1 = datetime.datetime.now()
-        print("COOL ", len(arcs), " in time ", e1-s1)
-        '''
         arcs = [Arc(i, j) for i in nodes for j in nodes if i._t == j._t - 1]
         print(f"I created {len(arcs)} arcs.")
 
@@ -340,50 +300,10 @@ class UC_Model():
             return UC_Model.UCNetworkModel
 
         UC_Model.UCNetworkModel = Model(name='Unit Commitment Problem - Network Formulation')
-        UC_Model.UCNetworkModel.context.cplex_parameters.threads = 5
+        UC_Model.UCNetworkModel.context.cplex_parameters.threads =  multiprocessing.cpu_count()
         # Create the variables
         print("I'm creating the variables")
-        if DO_MULTIPROCESSING_VARIABLES:
-            # Split the nodes in as many chunks as the number of cores and calculate the flow cost in parallel
-            manager = multiprocessing.Manager()
-            return_dict = manager.dict()
-            nCores = multiprocessing.cpu_count()
-            print("Number of cores: ", nCores)
-            nArcs = len(myNet.arcs)
-            print("Number of arcs: ",nArcs)
-            nArcsPerCore = nArcs // nCores
-            print("Number of arcs per core: ", nArcsPerCore)
-            nArcsLastCore = nArcs - nArcsPerCore * (nCores - 1)
-            print("Number of arcs on the last core: ", nArcsLastCore)
-
-            # Create the processes
-            processes = []
-            ns = manager.Namespace()
-            ns.model = UC_Model.UCNetworkModel
-            for i in range(nCores):
-                l=[]
-                if i == nCores - 1:
-                    l=[(arc._n1.id, arc._n2.id) for arc in myNet.arcs[i * nArcsPerCore:]]
-                    print("last l", len(l))
-                    processes.append(multiprocessing.Process(target=Worker_CreateVariables, args=(l,ns,return_dict)))
-                else:
-                    l=[(arc._n1.id, arc._n2.id) for arc in myNet.arcs[i * nArcsPerCore:(i + 1) * nArcsPerCore]]
-                    print("l", len(l))
-                    processes.append(multiprocessing.Process(target=Worker_CreateVariables, args=(l,ns,return_dict)))
-            # wait for all processes to finish
-            for p in processes:
-                p.start()
-
-            for p in processes:
-                p.join()
-            print("I FINISHED CREATING THE VARIABLES")
-            print("---" * 20)
-            print(type(return_dict))
-            print(type(return_dict._getvalue()))
-            UC_Model.UCNetworkModel = ns.model
-            x = return_dict._getvalue()
-        else:
-            x = {(arc._n1.id, arc._n2.id): UC_Model.UCNetworkModel.integer_var(name='x_{0}_{1}'.format(arc._n1.id, arc._n2.id)) for arc in myNet.arcs}
+        x = {(arc._n1.id, arc._n2.id): UC_Model.UCNetworkModel.integer_var(name='x_{0}_{1}'.format(arc._n1.id, arc._n2.id)) for arc in myNet.arcs}
 
         # each arc comes with a cost. Minimize all costed flows
         print("I'm creating the objective function")
@@ -393,13 +313,12 @@ class UC_Model():
         # Flow conservation constraints
         print("I'm creating the flow conservation constraints")
         for i in myNet.nodes:
-            if DO_VERBOSE_LOG:
-                print("I'm creating the outer flow conservation constraint for node ", i.id)
-            out_flow = UC_Model.UCNetworkModel.sum(x[(i.id, arc._n2.id)] for arc in i.outerArcs)
-                                        #   for j in myNet.nodes if (i, j) in myNet.arcs)
-            if DO_VERBOSE_LOG:
-                print("I'm creating the inner flow conservation constraint for node ", i.id)
-            in_flow = UC_Model.UCNetworkModel.sum(x[(arc._n1.id, i.id)] for arc in i.innerArcs)
+            if DO_SAVE_ARCS_IN_NODES:
+                out_flow = UC_Model.UCNetworkModel.sum(x[(i.id, arc._n2.id)] for arc in i.outerArcs)
+                in_flow = UC_Model.UCNetworkModel.sum(x[(arc._n1.id, i.id)] for arc in i.innerArcs)
+            else:
+                out_flow = UC_Model.UCNetworkModel.sum(x[(i.id, arc._n2.id)] for arc in myNet.arcs if arc._n1.id == i.id)
+                in_flow = UC_Model.UCNetworkModel.sum(x[(arc._n1.id, i.id)] for arc in myNet.arcs if arc._n2.id == i.id)
             UC_Model.UCNetworkModel.add_constraint(out_flow - in_flow == i.b)
             
         # # Flow bound constraints
@@ -408,42 +327,36 @@ class UC_Model():
         #     UC_Model.UCNetworkModel.add_constraint(x[i,j] >= lb.get((i,j), 0))
 
         # Unit commitment constraints
-        assert input.min_switch_down == input.min_switch_up
-        tau = input.min_switch_up
-        c = 0
-        for a in myNet.arcs:
-            if DO_VERBOSE_LOG:
-                print(f"Counter {c}/", len(myNet.arcs))
-            c+=1
+        if DO_MINUP_MINDOWN:
+            assert input.min_switch_down == input.min_switch_up
+            tau = input.min_switch_up
+            for a in myNet.arcs:
+                if a._n2.isSink:
+                    continue
 
-            # if a._n1.isSource:
-            #     continue
-            if a._n2.isSink:
-                continue
+                if a._n1.id[0] == a._n2.id[0]:
+                    continue
 
-            diffPattern = utils.getIDPatternDifferences(a._n1.id[0], a._n2.id[0])
-            # if count of 1s + count of 0s = 0, continue
-            n0 = diffPattern.count('0')
-            n1 = diffPattern.count('1')        
-            if n0 + n1 == 0:
-                continue
+                diffPattern = utils.getIDPatternDifferences(a._n1.id[0], a._n2.id[0]) 
+                nonValidNodeKeys = utils.getAllNodesViolatingMinDownAndUpTime(a._n1.id, a._n2.id,  input.nPeriodi, diffPattern, tau)
+                if len(nonValidNodeKeys) == 0:
+                    continue
 
-            nonValidNodeKeys = utils.getAllNodesViolatingMinDownAndUpTime(a._n1.id, a._n2.id,  input.nPeriodi, diffPattern, tau)
-            if len(nonValidNodeKeys) == 0:
-                continue
-            # From the outer arcs list of a.n2, search the arcs with n2.id in nonValidNodeKeys and add its inner arcs to the list
-            not_valid_arcs_list = []
-            for n in myNet.nodes:
-                if n.id in nonValidNodeKeys:
-                    not_valid_arcs_list.extend(n.innerArcs)
-            # If this arc variable is 1, then all the variables in the not_valid_arcs_list must be 0
-            if len(not_valid_arcs_list)>0:
-                invalidArcsFlows = UC_Model.UCNetworkModel.sum(x[(not_valid_arc._n1.id, not_valid_arc._n2.id)] for not_valid_arc in not_valid_arcs_list)
-                UC_Model.UCNetworkModel.add_constraint(UC_Model.UCNetworkModel.if_then(x[(a._n1.id, a._n2.id)] >= 1, invalidArcsFlows <= 0 ))
+                # From the outer arcs list of a.n2, search the arcs with n2.id in nonValidNodeKeys and add its inner arcs to the list
+                not_valid_arcs_list = []
+                for n in myNet.nodes:
+                    if n.id in nonValidNodeKeys:
+                        if DO_SAVE_ARCS_IN_NODES:
+                            not_valid_arcs_list.extend(n.innerArcs)
+                        else:
+                            not_valid_arcs_list.extend([arc for arc in myNet.arcs if arc._n2.id == n.id])
+                # If this arc variable is 1, then all the variables in the not_valid_arcs_list must be 0
+                if len(not_valid_arcs_list)>0:
+                    invalidArcsFlows = UC_Model.UCNetworkModel.sum(x[(not_valid_arc._n1.id, not_valid_arc._n2.id)] for not_valid_arc in not_valid_arcs_list)
+                    UC_Model.UCNetworkModel.add_constraint(UC_Model.UCNetworkModel.if_then(x[(a._n1.id, a._n2.id)] >= 1, invalidArcsFlows <= 0 ))
         
 
         print("I added all the constraints\n")
-        # return UC_Model.UCNetworkModel
 
     @staticmethod
     def getSingletonModel():
@@ -452,44 +365,42 @@ class UC_Model():
 
 
 if "__main__" == __name__:
-    # import sys
-    # print(sys.setrecursionlimit(100000)) # DANGER
-
     ######################################################
     print("****** STARTING CREATING THE NETWORK ******")
-    now = datetime.datetime.now()
+    now1 = datetime.datetime.now()
     myNet = UC_Network.createModelFromInput()
-    after = datetime.datetime.now()
-    print("****** NETWORK CREATED IN ", after-now, " ******\n\n")
+    after1 = datetime.datetime.now()
+    print("****** NETWORK CREATED IN ", after1-now1, " ******\n\n")
     ######################################################
 
     
     ######################################################
     print("****** I'M CREATING THE MODEL TO SOLVE THE UNIT COMMITMENT PROBLEM ******")
-    now = datetime.datetime.now()
+    now2 = datetime.datetime.now()
     UC_Model.generateUCNetworkModel(myNet)
     UCNetworkModel = UC_Model.getSingletonModel()
-    after = datetime.datetime.now()
+    after2 = datetime.datetime.now()
     UCNetworkModel.print_information()
-    print("****** UNIT COMMITMENT (NETWORK) MODEL CREATED IN ", after-now, " ******\n\n")
+    print("****** UNIT COMMITMENT (NETWORK) MODEL CREATED IN ", after2-now2, " ******\n\n")
     ######################################################
 
 
     ######################################################
     # # solve the model and print the solution
     print("****** I'M SOLVING THE MODEL ******")
-    now = datetime.datetime.now()
+    now3 = datetime.datetime.now()
     modelSolution = UCNetworkModel.solve()
-    after = datetime.datetime.now()
+    after3 = datetime.datetime.now()
     if modelSolution:
         modelSolution.display()
-        print("****** MODEL SOLVED IN ", after-now, " ******\n\n")
+        print("****** MODEL SOLVED IN ", after3-now3, " ******\n\n")
     else:
         print("****** MODEL NOT SOLVED ******\n\n")
+        exit(1)
     ######################################################
 
-
+    print("Total time elapsed: ", after3-now1)
     ######################################################
-    utils.plotNetworkWithSolution(myNet, modelSolution)
+    utils.plotNetworkWithSolution(myNet, modelSolution, print_all_arcs=DO_PRINT_ALL_ARCS)
     ######################################################
 

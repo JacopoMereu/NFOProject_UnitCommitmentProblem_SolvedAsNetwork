@@ -127,22 +127,23 @@ def negatePattern(pattern):
 def getAllNodesViolatingMinDownAndUpTime(id1, id2, nIntervalli, pattern, tau):
     i1, t1 = id1
     i2, t2 = id2
-    flag = False
-    #1
-    if flag:
-        print("P is ", pattern)
+    #1 Create pattern. P.S. pattern is already in input
+    # pattern = pattern
 
-    # 2
+    # 2 Split the pattern into a list of tuples (simple_pattern, i) where
+    #     simple_pattern is a pattern with all characters equal to x but one that can be 0 or 1.
+    #     i is the index of the character that is not x.
     pSplit = splitPattern(pattern)
-    if flag:
-        print("P split as comb of " , pSplit)
 
-    # 3
+
+    # 3 Negate the simple patterns: 0 -> 1, 1 -> 0, x -> x
     pSplit_Negated = [(negatePattern(simple_pattern),i) for (simple_pattern,i) in pSplit]
-    if flag:
-        print("not P split is ", pSplit_Negated)
 
-    # 4
+    # 4 Create an empty dictionary <string, int>. 
+    # For all the simple patterns in pSplit_Negated, 
+    #   get all the possible combinations of binary strings
+    #       and add them to the dictionary with the value tau[i].
+    #   If the key is already in the dictionary, then update the value with the maximum between the current value and tau[i].
     d = {}
     for (sp_negated, i) in pSplit_Negated:
         for p in getAllBinaryStringCombinationMatchingPattern(sp_negated):
@@ -150,20 +151,18 @@ def getAllNodesViolatingMinDownAndUpTime(id1, id2, nIntervalli, pattern, tau):
                 d[p] = tau[i]
             else:
                 d[p] = max(d[p], tau[i])
-    if flag:
-        print(d)
 
-    # 5
+    # 5 For each (node_id, window_size) in the dictionary, create a list of tuples (node_id, time) for all time in [t2+1, t2+2, ..., min(t2+window_size, nIntervalli-1)]
     output = []
-    for (k,v) in d.items():
+    for (node_id,window_size) in d.items():
         lht = t2+1
-        rht = min(t2+v-1,nIntervalli-1)
+        rht = min(t2+window_size,nIntervalli-1)
         if lht > rht:
             continue
         r = range(lht, rht)
-        output.extend([(k,time) for time in r])
-    if flag:
-        print(output)
+        output.extend([(node_id,time) for time in r])
+
+    # Return the output
     return output
 
 
@@ -182,17 +181,18 @@ def getArcFromStrVariableName(str):
    
    
 import matplotlib.pyplot as plt
-def plotNetworkWithSolution(myNet, modelSolution):
+def plotNetworkWithSolution(myNet, modelSolution, print_all_arcs=False):
     plt.figure()
 
     for i in myNet.nodes:
         # Plot the nodes
         plt.plot(i._t, i.getIntegerNumber(), 'o')
 
-    for arc in myNet.arcs:
-        i1, t1 = arc._n1.id
-        i2, t2 = arc._n2.id
-        plt.plot([t1, t2], [binStrToInt(i1), binStrToInt(i2)], color='black')
+    if print_all_arcs:
+        for arc in myNet.arcs:
+            i1, t1 = arc._n1.id
+            i2, t2 = arc._n2.id
+            plt.plot([t1, t2], [binStrToInt(i1), binStrToInt(i2)], color='black')
 
     # Plot the solution arcs
     for (k,v) in modelSolution.iter_var_values():

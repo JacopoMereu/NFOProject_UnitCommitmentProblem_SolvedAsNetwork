@@ -1,6 +1,6 @@
-flag=False
+DO_HUGE_SIZE_PROBLEM=False
 
-if flag:
+if DO_HUGE_SIZE_PROBLEM:
     nUnita = 10
     nPeriodi = 24
     # size(T)
@@ -39,8 +39,8 @@ else:
 
     startup_cost = [9000, 10000, 1100, 1120, 1800]
 
-    min_switch_up =   [9, 9, 6, 6, 7]
-    min_switch_down = [9, 9, 6, 6, 7]
+    min_switch_up =   [8, 8, 5, 5, 6]
+    min_switch_down = [8, 8, 5, 5, 6]
     # end size of I
 
     initial_status = '11000'
